@@ -49,7 +49,7 @@ po/*~
 # RStudio Connect folder
 rsconnect/
 
-*.png
+
 ignore
-**/.DS_Store
+*.DS_Store
 
