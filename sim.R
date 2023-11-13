@@ -17,7 +17,7 @@ box::use(mods/gtf[...],
 # library(ggplot2)
 
 ### Data ----
-gtf <- read_gtf("gencode.v44.annotation.gtf", nrows = 1000)
+gtf <- read_gtf("mods/gencode.v44.annotation.gtf", nrows = 1000)
 tbl <- subset(gtf, n_trans==44)$trans[[1]]
 tbl$trans_name <- extract_name(tbl$attribute, "transcript")
 
@@ -140,8 +140,8 @@ plot_summary <- function(climb_res, annotate_missing = TRUE) {
 ## MAIN ----
 
 # out <- do_sim(tse, seq(.5, 6, by = .5), n_sims = 50)
-# saveRDS(out, 'sim-50-out.rds')
-out <- readRDS("sim-50-out.rds")
+# saveRDS(out, 'rds_cache/sim-50-out.rds')
+out <- readRDS("rds_cache/sim-50-out.rds")
 
 method1 <- do_climb(out, method = "strict", note = "Bottom-up") 
 method2 <- do_climb(out, method = "ord", note = "Top-Down")
@@ -153,7 +153,7 @@ plot_summary(method2)
 .p <- plot_summary(method3, annotate_missing = F) +
   labs(y = "Sensitivity",
        title = expression("50 Similations of " ~ delta))
-ggsave("Sensitivity-FDR-delta-sims.png", plot = .p, dpi = 600)
+ggsave("figures/Sensitivity-FDR-delta-sims.png", plot = .p, dpi = 600)
 # .p1 <- plot_pvals(dplyr::bind_rows(method2$.data), sig_nodes_only = T) +
 #   facet_wrap(~delta, scales = "free_y") +
 #   labs(title = "Only Retained Nodes")
@@ -162,8 +162,8 @@ ggsave("Sensitivity-FDR-delta-sims.png", plot = .p, dpi = 600)
 #   facet_wrap(~delta, scales = "free_y") +
 #   labs(title = "All tested Nodes")
 # 
-# ggsave("pvals-hist-topdown-retainedNodes.png", .p1)
-# ggsave("pvals-hist-topdown-AllNodes.png", .p2)
+# ggsave("/figures/pvals-hist-topdown-retainedNodes.png", .p1)
+# ggsave("/figures/pvals-hist-topdown-AllNodes.png", .p2)
 
 #### gganimate ----
 
@@ -178,7 +178,7 @@ ggsave("Sensitivity-FDR-delta-sims.png", plot = .p, dpi = 600)
 # 
 # .anim <- gganimate::animate(
 #   anim,
-#   renderer = gganimate::gifski_renderer(file = "sim-50.gif"))
+#   renderer = gganimate::gifski_renderer(file = "gifs/sim-50.gif"))
 
 ### Split Counts ----
 
@@ -333,8 +333,8 @@ tse_by_climb <- function(tse, climb_res) {
 #                      dds
 #                    }, .progress = "dds")
 # # ddss_clmb <- purrr::map(ddss, climb, method = "ord", .progress = "climbing")
-# # saveRDS(ddss_clmb, "vst-dds-climb-res.rds")
-# ddss_clmb <- readRDS("vst-dds-climb-res.rds")
+# # saveRDS(ddss_clmb, "rsd_cache/vst-dds-climb-res.rds")
+# ddss_clmb <- readRDS("rsd_cache/vst-dds-climb-res.rds")
 # plot_pvals(dplyr::bind_rows(ddss_clmb), sig_nodes_only = F) +
 #   facet_wrap(~delta)
 
@@ -359,8 +359,8 @@ d
 ### H_0 null hypothesis error control experiment ----
 
 # tse_null <- do_sim(tse = tse, delta = 0, n_sims = 500)
-# saveRDS(tse_null, "sim-null.rds")
-tse_null <- readRDS("sim-null.rds")
+# saveRDS(tse_null, "rds_cache/sim-null.rds")
+tse_null <- readRDS("rds_cache/sim-null.rds")
 tse_null_res <- do_climb(tse_null, method = "order", note = "null", affected_rows = integer())
 
 plot_pvals(dplyr::bind_rows(tse_null_res$.data))
@@ -407,8 +407,8 @@ test_null_split |>
 ### simulate split tree with deltas
 
 # tse_split <- do_splitCounts(tse = tse, delta = seq(.5, 6, by = .5), n_sims = 50)
-# saveRDS(tse_split, "splitCounts-sim-deltas.rds")
-tse_split <- readRDS("splitCounts-sim-deltas.rds")
+# saveRDS(tse_split, "rds_cache/splitCounts-sim-deltas.rds")
+tse_split <- readRDS("rds_cache/splitCounts-sim-deltas.rds")
 plot_pvals2(tse_split$trained_res$.data)
 test_split_res <- lapply(tse_split$tested, function(x) x$result)
 failed_tests_sims <- which(vapply(test_split_res, \(x) identical(x,"FAILED"), T ))
