@@ -8,6 +8,7 @@
 
 # User-specific files
 .Ruserdata
+*Rproj
 
 # Example code in package build process
 *-Ex.R
@@ -49,4 +50,5 @@ po/*~
 rsconnect/
 
 *.png
+ignore
 
