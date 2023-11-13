@@ -1,0 +1,278 @@
+---
+title: "Lab Meeting"
+subtitle: "Long Read Sequencing & Tree Climbing"
+author: Justin Landis
+format: pptx
+editor: visual
+---
+
+\usepackage{amsmath}
+
+\usepackage{mathtools}
+
+\newcommand{\R}{\mathbb{R}}
+
+## Outline
+
+### Assisting in the Development of DE of RNAseq methods for long read sequencing
+
+1.  Use current methods for quantifying RNAseq of Published long read data
+
+2.  Prototype isoform grouping method with known complex gene
+
+3.  investigate error control solutions to combat double dipping of grouping methods
+
+# Part 1 - The Search For Data
+
+## Long Read Data
+
+To meet the first goal, I needed data from the **S**equance **R**ead **A**rchive (**SRA**). The perfect long read data would come from an experiment that...
+
+1.  implemented RNAseq
+2.  has at least 2 groups to evaluate differential expression
+3.  has at least 3 samples per group
+4.  Is not related to cancer research
+
+::: callout-important
+The Grant is submitted to the **N**ational **H**uman **G**enome **R**esearch **I**nstitute (**NHGRI**). Thus its best to avoid experiments that research cancer as there is a separate source of funding for that (**NCI**).
+:::
+
+## Tequila Seq - PRJNA883409
+
+Technically a "Targeted" sequencing approach - not purely RNAseq.
+
+| Cell Line             | Time Points | N Replicates |
+|-----------------------|-------------|--------------|
+| Brain tissue          | NA          | 3            |
+| SH-SY5Y/neuroblastoma | 4 hours     | 3            |
+| SH-SY5Y/neuroblastoma | 8 hours     | 3            |
+| SH-SY5Y/neuroblastoma | 48 hours    | 3            |
+
+## Analysis pipeline
+
+There are a number of steps that need to be taken before you may use an analysis tool such as `DESeq2`. These steps largely depend on your data source and analysis goals.
+
+```{mermaid}
+flowchart
+  A(Input Data) --> B(Alignment)
+  B --> C(Analysis/Quantification)
+```
+
+## Input Data
+
+The data we have found is from Oxford Nanopore sequencer. The data that was uploaded to the **SRA** is not a standard sequence format, but instead as a `fast5` directory. Before we can do an alignment we must perform basecalling.
+
+At its essence, the Data generated from a Nanopore sequencer is a sequence of current measurements called "squiggles". This data needs to be passed into a Neural Network basecaller to generate the standard FASTQ formats.
+
+Discerning the correct configuration for the basecaller also depends on the instrument used as well as the reagents such as the flow cell.
+
+```{mermaid}
+flowchart
+  A(Input Data/Fast5) --> D(Basecalling)
+  A -.-> B(Alignment)
+  subgraph X[" "]
+  E[Experiment Reagents/Equipment] --> D
+  D --> F>FASTQ]
+  end
+  F --> B
+  B --> C(Analysis/Quantification)
+```
+
+## Alignment & Quantification
+
+There were more headaches in converting nanopore data into a usable format than actually running the next two steps. Alignment was done with `minimap2`, and quantification was done with `salmon`.
+
+Both Bioinformatic softwares have Oxford Nanopore aware configuration options.
+
+```{mermaid}
+flowchart
+  A(Input Data) --> B(Alignment)
+  B -.-> C(Analysis/Quantification)
+  I>Gencode Refernce] --> D
+  I --> F
+  B --> D(minimap2)
+  subgraph X[" "]
+  D --> E>_aligned.bam]
+  end
+  E --> C
+  C --> F(salmon)
+  subgraph Y[" "]
+  F --> G>quant.sf]
+  end
+```
+
+## The last step
+
+The final step would be to read all the `quant.sf` data into R and perform some Differential Expression analysis. I unfortunately did not get to this point in my rotation, but all of the steps to perform basecalling and generate the `quant.sf` files have been documented.
+
+```{mermaid}
+flowchart
+  A(Input Data) --> B(Alignment)
+  B --> C(Analysis/Quantification)
+```
+
+# Part 2 - Tree Climbing
+
+## Motivation
+
+Long read sequencing allows for less ambiguity in alignments and quantification steps, which implies these methods do not need to infer *as much* which gene isoforms are present in RNAseq analysis.
+
+However, Long Read Sequencing comes **generally** the expense of read depth. Thus we would like to also increase our power.
+
+Suppose that there is differential expression and that some subset of isoforms within a gene are modulated together. Can we find an optimal node of a clustering tree to merge data?
+
+## Clustering Algorithm
+
+Before we can find a node, we must generate a tree. There are two main methods to consider.
+
+1.  hierarchical clustering on count data
+    1.  Data Dependent
+    2.  Biases p-values in merges
+2.  **hierarchical clustering on pairwise exon similarity measures**
+    1.  Biologically intuitive - similar transcripts may be regulated together
+    2.  deterministic (per gtf file)
+    3.  Potential for many 'tied' transcripts due to no overlap
+
+## Pairwise Exon Similarity Measure
+
+I implement a mixture of the Jacaard Index and Sorensen-Dice Coefficient. These are typically used for discrete sets of data and are defined as follows
+
+$$
+\begin{split}
+J(A,B) = \frac{|A\cap B|}{|A\cup B|}\\
+DSC = \frac{2|X\cap Y|}{|X| + |Y|}
+\end{split}
+$$
+
+## Extending Jacaard to basepair similarities
+
+We can extend the Jacaard Index if we regard $A$ and $B$ as two regions of a genome. We know $A\cap B$ if and only if $A_{start} \le B_{stop}$ and $A_{stop} \ge B_{start}$.
+
+$$
+A\cap B = \begin{cases} 
+A_{start}\le B_{start},\  A_{stop} \le B_{stop} : A_{start} - A_{stop}\\
+A_{start}\le B_{start},\  B_{stop} \le A_{stop} : A_{start} - B_{stop}\\
+B_{start}\le A_{start},\  A_{stop} \le B_{stop} : B_{start} - A_{stop}\\
+B_{start}\le A_{start},\  B_{stop} \le A_{stop} : B_{start} - B_{stop}\\
+\end{cases}
+$$
+
+We can also take $A \cup B$ as $\text{max}(\{A_{stop},B_{stop}\}) - \text{min}(\{A_{start},B_{start}\})$
+
+## Extending Sorensen-Dice Coefficient
+
+We may regard $X$ and $Y$ as the set of exons within two Genes, where their intersection is the sum of pairwise Jacaard Indexes. Specifically let $X$ be a set of $N$ exons, and $Y$ be a set of $M$ exons.
+
+$$
+\frac {2 \sum_n^N\sum_m^M J(X_n, Y_m)}{N + M}
+$$
+
+## Final Similarity Measure
+
+Let $G$ represent a set of isoforms of size $g$. given any indexes $i,\ j \le g$ , define $G_i$ and $G_j$ as isoforms $i$ and $j$ from $G$ such that they represent sets of exons of size $N$ and $M$ respectively. For any two $i$ and $j$, we can define the similarity as:
+
+$$
+S_{ij}(G_i,G_j) = \frac {2 \sum_n^N\sum_m^M J(G_{i_n}, G_{j_m})}{N + M}
+$$
+
+In using the above measure, we can produce a tree by with the following pseudo code:
+
+```{r}
+#| eval: false
+#| echo: true
+hclust(dist(similarity))
+```
+
+## Clustering Result
+
+![](simi-clustering-example.png)
+
+## Contrived Experiment
+
+Choose an inner node within the tree and shift the mean of all leaves for a particular group by some delta. We can evaluate our Tree climbing algorithm based on how well it accurately chooses the known perturbed nodes.
+
+## Formulating Inner Node Data
+
+Suppose we had a Gene with $N$ isoforms. Then there would exist $N-1$ inner nodes that would need to be added to our original data. These inner nodes are the sum of the leaves of a sample.
+
+Insert Graphic here to show growing dataframe
+
+Once we have our extended data, we perform `DESeq2` and evaluate the resulting pvalues with our tree Climbing algorithm
+
+## Algorithm 1 - Bottom Up
+
+1.  initialize all leafs as the set of possible nodes to keep.
+2.  Order p-values of inner nodes by their hclust height.
+3.  For an inner node, climb to that node if and only if both descendant's p-value is greater than the parent's p-value.
+    1.  If so, remove children from set and add this node.
+    2.  if not, flag this node as the highest for any ancestor.
+4.  continue until all inner nodes have been assessed.
+
+## Algorithm 2 - Top Down
+
+1.  Order all nodes (leaves and inner) by their p-values in ascending order.
+2.  For each node
+    1.  record all descendants
+    2.  add this node to the set of merge points if and only if its descendants are disjoint from the set of descendants of the current set of merge points.
+    3.  repeat until all leaves have been recorded.
+
+## An example
+
+![](Tree-Climbing-Example.png)
+
+![](Tree-Climbing-Example-bad.png)
+
+## Algorithm Assessment
+
+Evaluating our algorithm through simulations
+
+![](sim-50.gif)
+
+# Part 3 - Error Control
+
+## Motivation
+
+Generally speaking, moving up the tree will ultimately result in smaller p-values than at the leaves. This will lead to Type 1 error, or in other words a higher false discovery rate.
+
+Another way we can test for our model's bias is to see how it performs under the null hypothesis. Test statistics are only effective under the assumption that the $p \sim \text{Unif}(0, 1)$ under the null hypothesis.
+
+## Simulating Under the Null
+
+![](simulating-null-pvalues.png)
+
+## Count Splitting
+
+$$
+X_{ij} \sim \text{NBinom}(\mu_{ij}, \alpha = 100)\\
+X_{ij}^{\text{train}} \sim \text{Bin}(X_{ij}, \theta =0.5)\\
+X_{ij}^{\text{test}} = X_{ij} - X_{ij}^{\text{train}}
+$$
+
+The above is generally the entire protocol. We will generate counts $X_{ij}$ like normal, except perform our tree climbing algorithm on $X_{ij}^{\text{train}}$, to find the appropriate merge points. Then, we will merge the remaining counts $X_{ij}^{\text{test}}$ according to those merge points and view the distribution of p-values
+
+## Count splitting - $X_{ij}^{\text{train}}$
+
+![](Rplot-500-null-split-train.png)
+
+## Count splitting - $X_{ij}^{\text{test}}$
+
+![](Rplot-500-null-split-test.png)
+
+# Part 4 - Real Data Application
+
+## Programming woes
+
+In the last week, I was trying to tackle the Tequila-seq data in hopes to add it to my poster. This meant shifting much of the code base focusing around simulations and managable in memory objects to the common Bioconductor data structures. Changes included:
+
+1.  Reading GTF into a `GenomicRanges` data type
+2.  Converting similarity matrix calculations to use "Sparse Matrices" from the `Matrix` package.
+3.  Shifting functions to expect a `TreeSummarizedExperiment` object
+
+## Programming woes - continued
+
+1.  Reading 1.5 GB GTF file into a `GenomicRanges` \~ 30 seconds
+2.  Converting \~ 300 MB of count Data into a `SummarizedExperiment` object \~ 30 seconds
+3.  Generating Similarity hierarchical clustering Trees for all Genes that had at least 1 count \~ 45 minutes
+    1.  25,900 unique genes $\to$ 195,599 unique Transcripts
+4.  Expand dataset by internal nodes... \~ 4-5 hours
+5.  Split Counts/Climb Trees/DESeq2 ... TBD

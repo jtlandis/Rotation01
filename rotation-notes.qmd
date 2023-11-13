@@ -1,0 +1,603 @@
+---
+title: "Rotation Notes"
+format: html
+editor: visual
+number-sections: true
+execute: 
+  echo: false
+---
+
+```{r setup}
+
+box::use(
+  ggplot2[...],
+  dplyr[...],
+  tidyr[...],
+  pander[pander]
+)
+
+```
+
+# Outline
+
+algorithm
+
+Assisting in development of DE of RNAseq methods for long read sequencing.
+
+1.  Use current methods for quantifying RNAseq of published long read data
+2.  Prototype isoform grouping method with known complex gene
+3.  Investigate error control solutions to combat double dipping of grouping method
+
+## Goal 1
+
+### Finding Data
+
+We will need to find current published data on NCBI. Ideally we will find a project with many samples that can be compared against one another.
+
+#### Option 1: [PRJNA942630](https://www.ncbi.nlm.nih.gov/sra?linkname=bioproject_sra_all&from_uid=942630 "Long-read transcriptome profile of human lung cancer cells")
+
+The above Bio-project has 5 samples. This data set is unique in that each sample is not considered homogeneous of 1 particular type, but they are a mixture of 2 cells lines in differing ratios.
+
+```{r opt1-varied-sample}
+
+tibble(
+  sample = sprintf("GMS708988%i", 1:5),
+  nci_h1975 = seq(100, 0, by = -25), 
+  hcc827 = seq(0, 100, by = 25)
+) |>
+  pivot_longer(cols = -sample) |>
+  ggplot(aes(sample, y = value)) +
+  geom_col(aes(fill = name)) +
+  theme_classic() +
+  scale_fill_viridis_d() +
+  guides(x = guide_axis(angle = 45), y = guide_axis("% Mixture"), fill = guide_legend("Cell Line"))
+
+```
+
+PRJNA942630 may be an interesting data set to work with due to the mixture effect. While we may be interested in using this data set for testing and verification, I imagine that we would want a data set with two distinct groups for the downstream differential expression.
+
+#### Option 2: [PRJNA901965](https://www.ncbi.nlm.nih.gov/bioproject/901965 "Long-read transcriptome sequencing of osteosarcoma samples and normal samples")
+
+```{r opt2-patients}
+
+opt2 <- read.csv("data/meta_PRJNA901965.csv") |>
+  as_tibble() |>
+  extract(col = "Experiment.Title", into = "sample", regex = ": ([NT][0-9]+);", remove = F) |>
+  extract(col = "sample", into = c("type", "id"), regex = "(.)(.*)", convert = T) 
+
+count(opt2, type) |>
+  pander()
+count(opt2, id) |>
+  count(n) |>
+  pander()
+
+```
+
+From the above meta data, this data set has 36 samples. Patients (n=23) include children, adolescents and young adults (unfortunately, this meta data is left out). 13 of the samples are Osteosarcoma. Each Osteosarcoma sample has paired sample regarded as normal tissue. There are 10 additional "Normal tissue" samples that do not have a Osteosarcoma counterpart.
+
+::: callout-important
+## NHGRI
+
+The grant renewal is being submitted to National Human Genome Research Institute, and as such, we should avoid using any samples that are cancer related because they are not the National Cancer Institute (NCI).
+:::
+
+#### Option 3: [PRJNA793881](https://www.ncbi.nlm.nih.gov/bioproject/793881)
+
+48 samples, all human and from the minION.
+
+```{r}
+opt3 <- readr::read_csv("data/meta_PRJNA793881.csv", show_col_types = F) |> extract(`Experiment Title`, into = "hname", regex = ": ([^;]+)", remove = F) |> mutate(hname = gsub("([ \\(\\)]+| - )", "_", hname) |> sub("_$","", x = _) |> tolower())
+opt3_meta <- readr::read_tsv("data/meta_PRJNA793881-2.txt", show_col_types = F) |>
+  mutate(hname = sub(".tar.gz", '',`File Name`) |> tolower(),
+         Size = sub("Gb","", Size) |> as.numeric()) |>
+  select(biosample=Sample, hname, file_size_gb = Size)
+opt3 <- left_join(opt3, opt3_meta, join_by(hname))
+#wget https://sra-pub-src-1.s3.amazonaws.com/SRR17414722/Human_Skeletal_Muscle_1D_cDNA.tar.gz.3
+```
+
+To download everything would require `r round(sum(opt3$file_size_gb)/1000,0)` Tb of space. Further more, this data is raw data from the minION, meaning that we would need to call their basecaller first to get it to a format that is usable. (basecaller script is a work in progress for optimazation - but is running!)
+
+`guppy_basecaller` will split reads based on a configuration file for pass fail.
+
+```         
+guppy_basecaller -i $input \
+                -s $output \
+                -c ~/dna_r10.3_450bps_hac.cfg \
+                --num_callers 4 \
+                --gpu_runners_per_device 8 \
+                -x 'cuda:all' \
+                --bam_out
+```
+
+Retrieving the `-c .*.cfg` file depends on the outputs of
+
+```         
+guppy_basecaller --print_workflows
+```
+
+We know what kit was used (**SQK-LSK109**) but not the flowcell. Filter the output for the known kit give us three options for config file names: **dna_r10.3_450bps_hac, dna_r10_450bps_hac, dna_r9.3.1_450bps_hac.**
+
+These files can be found relative to the executable files of the `guppy_basecaller` command. For example `/nas/longleaf/rhel8/apps/guppy/5.6.7/ont-guppy/bin/guppy_basecaller` is the executable, thne you can find the configs here: `/nas/longleaf/rhel8/apps/guppy/5.6.7/ont-guppy/data/*.cfg`.
+
+#### Option 4: [PRJNA883409](https://www.ncbi.nlm.nih.gov/bioproject/PRJNA883409) - TEQUILA-seq {#sec-tequila}
+
+Mike has requested that we focus on this project. Specifically on 12 samples:
+
+```{r}
+opt4 <- readr::read_csv("data/PRJNA883409-Taquila-seq/meta_PRJA883409-filtered.csv", n_max = 12)
+opt4
+```
+
+Data has been downloaded and I have put all 12 samples through basecalling. The basecalling script could be optimized for the longleaf slurm cluster since it seems with all my testing and some other resources out there that for each `guppy_basecaller` call, more than one gpu used does not necessarily help the process complete faster.
+
+An alignment must be made next with minimap tool against the transcriptome.
+
+``` bash
+# create index
+minimap2 -t ${threads} -I 1000G -d ${output.index} ${input.genome}
+# align reads
+# opts -> minimap2_opts
+# msec -> maximum_secondary
+# psec -> secondary_score_
+minimap2 -t ${threads} -ax map-ont -p 1.0 -N 100 ${input.index} ${input.fastq} \
+    | samtools view -Sb > ${output.bam};
+    samtools sort -@ ${threads} ${output.bam} -o ${output.sbam};
+    samtools index ${output.sbam};
+    
+```
+
+The next step is to use `salmon` to quantify the basecalled samples. According to [the salmon github documentation](https://combine-lab.github.io/salmon/getting_started/), it is better to build our index on the transcriptome instead of the organism's genome. Mike has a preference for gencode, so we are using the latest reference, [version 44](https://www.gencodegenes.org/human/). The GTF reference "Comprehensive gene annotation" is downloaded to this project and the "Transcript sequences" from the same web page was downloaded to longleaf and an index was built using `salmon index`.
+
+The files are then quantified via
+
+``` bash
+
+salmon quant -i data/human_index -l A \
+  --ont \
+  --noErrorModel \
+  -1 ${FILE_dir}/${FILE}.fastq.gz \
+  -p 16 --validateMappings \
+  -o quants/${FILE_dir}/_quants
+```
+
+There are other tools for quantifying long read sequencing such as [bambu](https://github.com/GoekeLab/bambu) and [espresso](https://github.com/Xinglab/espresso). I would need to look into the environment setup details in order to get it working though.
+
+## Rotation Goals
+
+-   Rstan/stan
+
+-   Read papers on Salmon/Bambu/Swish
+
+-   Write methods for count-splitting, knock-offs (engineered null features)
+
+-   software for creating isoform tree's is "tree terminus" (**Not going to use this**)
+
+    -   Try and get a transcript tree for (at least one gene) a trascriptome. Devise your on methods for how to split transcripts in of a single gene into similar nodes.
+
+-   Find 6 samples to start (3 replicates, 2 groups)\...
+
+-   Use the latest Gencode GTF file.
+
+-   go through tequila paper and pick a gene in their panel to simulate/generate a tree on.
+
+## Methods {#sec-methods-tequila}
+
+### Data Preparation
+
+This section covers all the steps taken to prepare Source data from @sec-tequila.
+
+#### Downloading Alignments
+
+The source script is as follows to download
+
+```{bash}
+#| eval: false
+#| echo: true
+#! /bin/bash
+
+
+wget https://sra-pub-src-1.s3.amazonaws.com/SRR21678817/Brain_TEQUILA-seq_1.tar.gz.2
+wget https://sra-pub-src-1.s3.amazonaws.com/SRR21678818/Brain_TEQUILA-seq_2.tar.gz.2
+wget https://sra-pub-src-1.s3.amazonaws.com/SRR21678819/Brain_TEQUILA-seq_3.tar.gz.2
+wget https://sra-pub-src-1.s3.amazonaws.com/SRR21678826/SH-SY5Y_TEQUILA-seq_4h_1.tar.gz.2
+wget https://sra-pub-src-1.s3.amazonaws.com/SRR21678827/SH-SY5Y_TEQUILA-seq_4h_2.tar.gz.1
+wget https://sra-pub-src-1.s3.amazonaws.com/SRR21678828/SH-SY5Y_TEQUILA-seq_4h_3.tar.gz.2
+wget https://sra-pub-src-1.s3.amazonaws.com/SRR21678829/SH-SY5Y_TEQUILA-seq_8h_1.tar.gz.2
+wget https://sra-pub-src-1.s3.amazonaws.com/SRR21678830/SH-SY5Y_TEQUILA-seq_8h_2.tar.gz.2
+wget https://sra-pub-src-1.s3.amazonaws.com/SRR21678831/SH-SY5Y_TEQUILA-seq_8h_3.tar.gz.2
+wget https://sra-pub-src-1.s3.amazonaws.com/SRR21678832/SH-SY5Y_TEQUILA-seq_48h_1.tar.gz.2
+wget https://sra-pub-src-1.s3.amazonaws.com/SRR21678833/SH-SY5Y_TEQUILA-seq_48h_2.tar.gz.2
+wget https://sra-pub-src-1.s3.amazonaws.com/SRR21678834/SH-SY5Y_TEQUILA-seq_48h_3.tar.gz.2
+
+```
+
+::: callout-important
+Be sure to connect to the data transfer node prior to running the above script, or else ITS will be angry!
+
+```{bash}
+#| echo: true
+#| eval: false
+
+ssh $USER@rc-dm.its.unc.edu
+
+```
+:::
+
+#### Unzipping Tar Archives
+
+Each archive can be unzipped with the `tar` command.
+
+```{bash}
+#| echo: true
+#| eval: false
+
+#submit sbatch job to unzip each file
+for FILE in `ls *TEQUILA*.tar.gz*`
+do
+  sbatch --time 300 --out out-unzip-${FILE%.tar*}-%A.out --wrap "tar -xvzf ${FILE}"
+done
+
+```
+
+#### Guppy Basecalling
+
+Each archive will have a `/fast5` directory in which we want to process.
+
+The following was the script used on each `/fast5` directory. Occasionally the process would fail with a CUDA error, but it was not always obvious why.
+
+```{bash}
+#| echo: true
+#| eval: false
+#!/bin/bash
+
+#SBATCH -N 1
+#SBATCH -n 1
+#SBATCH -p gpu
+#SBATCH --mem=32g
+#SBATCH -t 900
+#SBATCH --qos gpu_access
+#SBATCH --gres=gpu:4
+#SBATCH -o out-run-guppy-%A.log
+
+
+module load guppy
+echo "Staring run-guppy.sh script with the following SBATCH parameters"
+grep '^#SBATCH' $0
+echo ""
+
+
+CONFIG_PATH=/nas/longleaf/rhel8/apps/guppy/5.6.7/ont-guppy/data/
+CONFIG_OPT=dna_r9.4.1_450bps_hac 
+echo "guppy module loaded"
+for input in $@; do
+	echo "attempting guppy_basecaller on $input"
+	output=${input%/}_out
+	mkdir -p $output
+	guppy_basecaller -i $input \
+		-s $output \
+	       	-c ${CONFIG_PATH%/}/${CONFIG_OPT}.cfg \
+		--num_callers 16 \
+		--gpu_runners_per_device 32 \
+		--chunks_per_runner 512 \
+		--chunk_size 2000 \
+		-x 'cuda:all' \
+		--compress_fastq \
+                -q 0
+done
+
+echo "run-guppy.sh has complete"
+
+```
+
+::: callout-note
+There has been [resources that claim](https://esr-nz.github.io/gpu_basecalling_testing/gpu_benchmarking.html) in their own benchmarking that providing more GPUs does not improve the basecalling speed. In my own (very limited) testing, 4 GPUs are better than 1, but I haven't had success requesting more than 4 or getting the process to run faster. There is also ambiguity on how the `--chunks_per_runner` and `--chunk_size` parameters affect speed of the process.
+:::
+
+I am using the High accuracy caller which is slower. This is set by `CONFIG_OPT=dna_r9.4.1_450bps_hac` in the script. What is used here largely depends on the flowcell used in the project.
+
+```{bash}
+#| echo: true
+#| eval: false
+
+guppy_basecaller --print_workflows
+
+```
+
+Once the script finishes, it will categorize sequences into 2 folders, `/fail` and `/pass`. There are additional housekeeping steps that can be done just to make these files easier to work with. One such thing is concatenating the multiple records in `/pass` into a single file so that we do not need to worry about the arguments for `salmon` quantification.
+
+#### Quantification
+
+I again created a bash script to handle quantification
+
+```{bash}
+#| echo: true
+#| eval: false
+#! /bin/bash
+
+SN=1
+Sthreads=16
+Smem=16G
+Stime=240
+
+IndexIn=/nas/longleaf/home/jtlandis/work/Grad/PRJNA883409/analysis/data/minimap2/transcriptome_index.mmi
+TransIn=/nas/longleaf/home/jtlandis/work/Grad/PRJNA883409/analysis/data/gencode_v44.trans.fa.gz
+
+USAGE="
+USAGE:\n
+  $0 [options] [--out <OUT>] <FASTQ>...\n\n
+
+  Options:\n
+  --time\t\textend the time for sbatch job [default $Stime mins]\n\n
+
+  --mem\t\tmemory for the sbatch job [default $Smem]\n\n
+
+  --threads\tNumber of cores to run [default $Sthreads]\n\n
+
+  --out\t\tGeneral output name. This is required if\n\t\t
+  			<FASTQ> postional arguments are greater than 1\n\t\t
+  			alignments will be <OUT>_aligned.bam and salmon\n\t\t
+			results will be in <OUT>_quant.\n\n\
+
+  --help		print help documentation\n\n
+
+  Description:\n\t
+  Run minimap2 and salmon on a set of fastq files. minimap2 index \n
+   and transcriptome are fixed at the top of $0 script. This script is\n
+   intended to be used on oxford nanopore reads and does no checked on\n
+   fastq input that they are longreads from the oxford nanopore systems.\n
+"
+
+while [[ $# -gt 0 ]] && [[ $1 == "--"* ]] 
+do
+	opt=$1
+	shift
+	case "$opt" in
+		-- ) 
+			break 2 ;;
+		--time )
+			Stime=$1
+			shift ;;
+		--mem )
+			Smem=$1
+			shift ;;
+		--threads )
+			Sthreads=$1
+			shift ;;
+		--out )
+			TESTFILE=${1%.bam}_aligned.bam
+			if [[ -e $TESTFILE ]]
+			then
+				echo "${TESTFILE} already exists! Cannot continue"
+				exit 1
+			fi
+			OUT=${1%.bam} ;;
+		--help )
+			echo -e $USAGE 
+			exit 0 ;;
+		* ) 
+			echo "invalid argument $1 $@" >&2 
+			exit 1 ;;
+		
+	esac
+done
+
+ 
+if [[ $# -gt 1 ]] 
+then
+	if [[ -z ${OUT+x} ]]
+	then
+		echo "--out <OUT> is required if file input is greater than 1"
+		exit 1
+	fi
+elif [[ $# -eq 0 ]]
+then
+	echo "at least 1 argument must be supplied as input"
+	exit 1
+elif [[ -z ${OUT+z} ]]
+then
+	OUT=${1%.f*q*}
+        echo "--out <OUT> not specified, using \"${OUT}\" as template name"
+fi
+
+module load minimap2
+module load samtools
+module load salmon
+
+echo "starting mapping of $# inputs as a single file"
+sbatch -N $SN \
+	-n $Sthreads \
+	--time $Stime \
+	--mem $Smem \
+	--out out-miniSalmon-${OUT}-%A.log \
+	--wrap "minimap2 -t ${Sthreads} \
+	-a -x map-ont \
+	-p 1.0 \
+	-N 100 \
+	$IndexIn $@ | samtools view -Sb > ${OUT}_aligned.bam && \
+	salmon quant \
+	--ont --noLengthCorrection \
+	-p 8 -t $TransIn \
+	-l U -a ${OUT}_aligned.bam \
+	-o ${OUT}_quant"
+```
+
+::: callout-important
+The script is meant to be run on each sample independently! Submitting multiple samples together will have their reads quantified together.
+:::
+
+The actual command is thanks to Mike reaching out to rob on [how to properly align ONT reads to a transcriptome prior to quantification](https://gist.github.com/mikelove/922c323a7ae02ac5cedd9d1b3019e0fb).
+
+The outputs of the script will return a `${OUT}_quant` directory with a `.sf` file to use.
+
+### R
+
+### Building A Tree
+
+#### Similarity ideas
+
+Refer to similarity metrics [here](https://effectivesoftwaredesign.com/2019/02/27/data-science-set-similarity-metrics/)
+
+##### Method 1 - by transcript base pair range
+
+Original method that is essentially just a Jaccard Similarity metric on the overall base pair ranges for transcripts within a gene. This is a good starting point, but I believe we could get more fine tuned similarities if we considered exon base pair intersections first.
+
+##### Method 2 - by exon base pair similarity and Sorensen Coefficient
+
+Similar to the first method except instead of computing Jaccard Similarity on the transcripts, we do this for all exons that exist in our sample, and then apply a variation of the Sorensen Coefficient metric for each pairwise transcript. Once we have the matrix of similarities, we can then subset the matrix based on the transcripts the exons belong to. Here we take the sum of these indexes to be $X \cap Y$ .
+
+::: callout-note
+This may be an important distinction. The Sorensen Coefficient calls for the size of the intersection, whereas we are looking at their Jaccard similarities.
+
+The Sorensen Coefficient is:
+
+$$
+DSC=\frac{2|X\cap Y|}{|X| +|Y|}
+$$
+
+whereas we are doing
+
+$$
+=\frac {2\cdot J(X_E,Y_E)}{|X_E| +|Y_E|}
+$$
+
+where
+:::
+
+$$
+S_{ij}(T_i,T_j) = \frac{2\sum^k \sum^l J(T_{i_{k}},T_{j_{l}})}{k + l}
+$$
+
+```{r}
+
+thm <- list(ggside::theme_ggside_classic(),
+            theme(
+  axis.text.y = element_blank(),
+  axis.ticks.y = element_blank(),
+  axis.title.y = element_blank(),
+  axis.text.x = element_text(hjust = .8),
+  ggside.panel.scale.y = .2
+))
+box::use(./mods/gtf[...], ./mods/similarity[...])
+gtf <- read_gtf("gencode.v44.annotation.gtf", nrows = 1000)
+tbl <- subset(gtf, n_trans==44)$trans[[1]]
+plot_cluster(tbl, 'basepair', name = "trans") 
+.p <-plot_cluster(tbl, "so", name = "trans") + thm 
+.p
+ggsave("simi-clustering-example.png", plot = .p, dpi = 400 )
+  
+
+# plot_cluster(gtf[24,]$trans[[1]], "so", name = "trans")
+# plot_cluster(gtf[24,]$trans[[1]], name = "trans")
+# tbl$trans_name <- extract_name(tbl$attribute, "trans")
+# exons <- select(tbl, trans_name, exons) |>
+#   tidyr::unnest(exons)
+# plot_cluster(exons, name = "ex")
+# emat <- bp_simularity(exons$start, exons$end)
+```
+
+```{r}
+tree <- cluster_data(tbl, simularity_method = "sorensen")
+for (i in 2:12) {
+  tbl[[paste0("k", i)]] <- cutree(tree, k = i)
+}
+
+tree_data <- dendro_data(tree) |>
+  filter(y == yend) |>
+  arrange(-y) |>
+  top_n(n = 9)
+plot_cluster(tbl, simularity_method = "so") +
+  ggside::geom_ysidetile(aes(x = -1, yfill = factor(k9), ycolor = factor(k9))) +
+  ggside::geom_ysidetext(
+    aes(x = y, y = (x + xend)/2,
+        label = paste(1:9)), 
+    data = tree_data,
+    inherit.aes = F,
+    color = "red", face = "bold"
+  )
+  # lapply(2:12, function(x) {
+  #   y <- 1-x
+  #   ggside::geom_ysidetile(aes(x = y, yfill = factor(.data[[paste0("k",x)]])))
+  # }
+  #   )
+library(TreeSummarizedExperiment)
+ape_tree <- ape::as.phylo(tree)
+ape_tree$tip.label <- tbl$trans_name
+tse <- TreeSummarizedExperiment(
+  assays = SimpleList(counts = matrix(0, nrow = 44, ncol = 10,
+                                      dimnames = list(tbl$trans_name, sprintf("C%02i", 1:10)))),
+  rowData = data.frame(attr = tbl$attribute),
+  # rowRanges = GRanges(tbl$seqname,
+  #                     ranges = IRanges(start = tbl$start, 
+  #                                      end = tbl$end,
+  #                                      name = tbl$trans_name),
+  #                     strand = tbl$strand),
+  rowTree = ape_tree
+)
+
+```
+
+```{r}
+box::use(./rnaseq[...])
+files <- list.files("data/PRJNA883409-Taquila-seq", "*.sf", full.names = T)
+quant_data <- lapply(files,
+                     readr::read_table, show_col_types = F)
+quant_data <- dplyr::bind_rows(!!!quant_data, .id = "file")
+quant_data$file <- files[as.integer(quant_data$file)]
+se <- as_se(quant_data, genes = Name, cols = file, vals = c(TPM, NumReads))
+colData(se)$reps <- stringr::str_extract(se$file, "[123].sf") |> sub(".sf", "", x = _) |> as.numeric()
+colData(se)$time_points <- stringr::str_extract(se$file, "_[48]+h_") |> gsub("_", "", x = _) |> sub("h", "Hr", x = _)
+colData(se) <- as(left_join(as_tibble(colData(se)), opt4, by = c("reps","time_points")),"DataFrame")
+se_1 <- se[, se$time_points=="4Hr" | se$sample=="brain"]
+assay(se_1, "counts") <- assay(se_1)
+assay(se_1, "counts")[] <- as.integer(round(assay(se_1),digits = 0))
+assays(se_1) <- assays(se_1)[c(3,1,2)]
+dds_1 <- DESeqDataSet(se_1, design = ~ sample)
+dds_1 <- DESeq(dds_1)
+res <- results(dds_1, name = "sample_neuroblastoma_vs_brain")
+res
+
+
+```
+
+Three types of trees
+
+-   one based on transcript similarities, one base
+-   based on transcription profile
+-   a merging of the previous two
+
+In the context of simulation we will take a tree and determine a subset of nodes that follow $H_0$ and another set, we call $H_A$ that is differentially regulated between two or more sampled groups. We will consider this the supposed ground truth.
+
+On a hypothetical tree, $H_A$ is associated with a tree node such that the $\delta$ is similar for all sub nodes between sample groups.
+
+We would then use this tree to show that grouping genes by a tree node is *better* than not doing so?
+
+-   How do we generate pvalues? are we running DESeq2 as we iteritively combined two transcript loci?
+
+    -   Provide names to each node of the tree (including leaves).
+
+    -   Each node will be the sum of its decedents (per cell)
+
+    -   Split the tree with `cutree`, only include novel splits (some combination of leaves that has not yet been seen).
+
+    -   Assuming we start with a SummerizedExperiment with $N$ genes and accompanied by an hclust tree, By the end of it we will have a new SummerizedExperiment object with $2N-1$ rows, where each row represents a node.
+
+        -   It may be useful to create a new data representation for the trees. I know a bit about hclust, but TreeSummerizedExperiment uses the `phylo` class from the `ape` package.
+
+    -   We can then shove this data set through to any quantification tool to generate pvalues such as with `DESeq2` .
+
+    -   We can then create a tree climbing algorithm and say if immediate parent has smaller p-value then prefer parent.
+
+    -   Finally, we can try and test for error control with count splitting. Provide one data set to climb the tree on and find "optimal" tree nodes. Once optimal partitions are found - use the other half of data set (informed by optimal partitions) and test p-values.
+
+-   How do we consider merging of trees? cross products of similarities
+
+-   How do we generate measures of error once we can generate p-values for either sequence of tests
+
+method one,
+
+1.  choose a node, go to its parent. test if
+
+-   simulate counts on the leafs (negbinomal) such that there is an optimal res. of the tree
+
+
+
