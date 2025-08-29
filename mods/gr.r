@@ -5,7 +5,7 @@ box::use(
   rlang[abort]
 )
 
-expected_gencode_file <- "gencode.v44.annotation.gtf"
+expected_gencode_file <- "gencode.v46.annotation.gtf"
 gencode_file <- box::file(expected_gencode_file)
 if (!file.exists(gencode_file))
   abort(

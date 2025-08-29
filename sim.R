@@ -17,7 +17,7 @@ box::use(mods/gtf[...],
 # library(ggplot2)
 
 ### Data ----
-gtf <- read_gtf("mods/gencode.v44.annotation.gtf", nrows = 1000)
+gtf <- read_gtf("mods/gencode.v46.annotation.gtf", nrows = 1000)
 tbl <- subset(gtf, n_trans==44)$trans[[1]]
 tbl$trans_name <- extract_name(tbl$attribute, "transcript")
 
@@ -395,7 +395,7 @@ test_null_split <- test_res[-failed_tests] |>
   dplyr::bind_rows() 
 test_null_split |>
   ggplot(aes(x = pvalue)) +
-  geom_histogram(aes(y = after_stat(count/n*1000),
+  geom_histogram(aes(y = after_stat(count*1000),
                      fill = internalNode), bins = 15, position = "stack") +
   geom_density(aes(y = after_stat(density)), color = "red") +
   # facet_grid(cols = vars(internalNode)) +

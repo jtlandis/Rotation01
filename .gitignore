@@ -52,4 +52,11 @@ rsconnect/
 
 ignore
 *.DS_Store
-
+lab-meeting
+*_files
+*.html
+*.pdf
+mods/experimental
+rotation-project-notes/
+gifs
+figures

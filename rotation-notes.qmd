@@ -86,7 +86,10 @@ The grant renewal is being submitted to National Human Genome Research Institute
 48 samples, all human and from the minION.
 
 ```{r}
-opt3 <- readr::read_csv("data/meta_PRJNA793881.csv", show_col_types = F) |> extract(`Experiment Title`, into = "hname", regex = ": ([^;]+)", remove = F) |> mutate(hname = gsub("([ \\(\\)]+| - )", "_", hname) |> sub("_$","", x = _) |> tolower())
+opt3 <- readr::read_csv("data/meta_PRJNA793881.csv", show_col_types = F) |>
+  extract(`Experiment Title`, into = "hname", regex = ": ([^;]+)", remove = F) |> 
+  mutate(hname = gsub("([ \\(\\)]+| - )", "_", hname) |> 
+           sub("_$","", x = _) |> tolower())
 opt3_meta <- readr::read_tsv("data/meta_PRJNA793881-2.txt", show_col_types = F) |>
   mutate(hname = sub(".tar.gz", '',`File Name`) |> tolower(),
          Size = sub("Gb","", Size) |> as.numeric()) |>
@@ -174,7 +177,7 @@ There are other tools for quantifying long read sequencing such as [bambu](https
 
     -   Try and get a transcript tree for (at least one gene) a trascriptome. Devise your on methods for how to split transcripts in of a single gene into similar nodes.
 
--   Find 6 samples to start (3 replicates, 2 groups)\...
+-   Find 6 samples to start (3 replicates, 2 groups)...
 
 -   Use the latest Gencode GTF file.
 
@@ -598,6 +601,3 @@ method one,
 1.  choose a node, go to its parent. test if
 
 -   simulate counts on the leafs (negbinomal) such that there is an optimal res. of the tree
-
-
-

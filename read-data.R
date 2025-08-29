@@ -7,9 +7,9 @@ box::use(mods/gtf,
          )
 
 
-sf_files <- list.files("data/PRJNA883409-Taquila-seq", pattern = ".sf$", full.names = T)
+sf_files <- list.files(box::file("data/PRJNA883409-Taquila-seq"), pattern = ".sf$", full.names = T)
 sf_data <- readr::read_delim(sf_files, id = 'file', col_names = T, show_col_types = F)
-meta <- readr::read_csv("data/PRJNA883409-Taquila-seq/meta_PRJA883409-filtered.csv") 
+meta <- readr::read_csv(box::file("data/PRJNA883409-Taquila-seq/meta_PRJA883409-filtered.csv")) 
 meta <- meta[1:12,]
 
 sf_data <- dplyr::mutate(
@@ -98,6 +98,7 @@ makeSEfromTidy <- function(sf_data, assay_data, rowData, colData, GR) {
 
 se <- makeSEfromTidy(sf_data, c(TPM, NumReads), rowData = c(Length, EffectiveLength), colData = sample:source_name, GR = GR)
 
+mutate(se, counts = round(NumReads,0))
 assay(se, 'counts') <- round(assay(se, 2), 0)
 assays(se) <- assays(se)[c(3,1,2)]
 se_sub <- se[rowSums(assay(se, 'counts'))>0,]@rowRanges$gene_names
