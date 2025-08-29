@@ -1,0 +1,1 @@
+An alternative template. This version was ultimately abandoned in favor of a more "traditional" poster template.

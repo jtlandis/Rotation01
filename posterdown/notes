@@ -1,0 +1,48 @@
+
+## Proof of Concept
+
+Count splitting can control for Type 1 error control when merging Similar Isoform Gene counts
+
+## Background
+
+Traditional RNAseq analysis tools has been developed under the assumptions of short read sequencing. Using Short read analysis tools on long read data is not an optimal strategry, so new methods must be developed. Long reads are less ambiguous to gene isoform transcripts than short read sequencing, providing more confidence in transcripts detected. Long reads generally trade read depth for read length. To detect differential expression, we generating tree's based on transcript similarities and finding the optimal nodes to represent our data.
+
+* Emergences of longread sequencing
+
+## What are you focused on and why
+
+Two parts
+
+ * tree climbing algorithm and assessment
+ * Count splitting
+
+## what would your particular technique mean
+
+Allows better application of Isoform gene merging
+ * form of feature selection
+ * Informs that certain genes are regulated together
+ 
+## Approach
+
+
+## Results
+
+Figures
+
+
+## What is now possible based on your results?
+
+# Lighting talk
+
+
+RNAseq 
+Imagine your favorite book, imagine your friend reads you a string of 5 words from within the book, how confident you would you be in decering which chapter it came from? Now imagine they read you a paragrah, this is the difference between short read and long read sequencing
+
+Double dipping false positive rates
+
+How familiar with DNA? RNA-seq analysis? RNAseq is the basis for many applications, but unfortunately, it is flawed due to the nature of short read sequencing. With the advent of longread sequencing new tools
+Type 1 error, False positives rates, are documented in current RNAseq applciations. Since Analysis is often done on the same dataset as feature selection - this leads to higher false positive rates.
+
+
+
+

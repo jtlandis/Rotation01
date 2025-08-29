@@ -242,7 +242,7 @@ data_clust <- mutate(data_clust,
        across(starts_with("y"), ~scales::rescale(.x, from = c(-.env$.maxy, -.env$.miny),to = c(810000, 824000))))
 ```
 
-```{r fig1, fig.align='center', fig.width=13, fig.height=8}
+```{r fig1, fig.align='center', fig.width=13, fig.height=8, warning=FALSE}
 perturbed_node <- filter(data_clust, node == 77L, y==yend)
 .x <- perturbed_node$y
 .y <- mean(c(perturbed_node$x, perturbed_node$xend))
@@ -287,7 +287,7 @@ mat_data <- expand_grid(
 ) |>
   mutate(
     groups = case_when(xmin <= 5 ~ "G1", TRUE ~ "G2"),
-    affect = between(ymin,14, 35),
+    affect = between(ymin,15, 35),
     mu = case_when(affect&groups=="G2" ~ 20, TRUE ~ 10),
     counts = rnbinom(n(),size = 100, mu = mu)
   ) |>
@@ -312,7 +312,7 @@ pp <- p +
   ) +
   geom_text(
     data = tibble(x = c(863500, 870000),
-                  t = c("Group1", "Group2")),
+                  t = c("Control", "Treatment")),
     aes(x = x, y = 45, label = t),
     color = "white",
     fontface = "bold",
@@ -326,7 +326,7 @@ pp <- p +
 )  +
   geom_rect(
     xmin = 867100, xmax = 873500,
-    ymin = 13.5, ymax = 35.5,
+    ymin = 14.5, ymax = 35.5,
     fill = "darkred",
     alpha = 0,
     color = "red",
